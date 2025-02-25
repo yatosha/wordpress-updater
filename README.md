@@ -5,7 +5,7 @@ A simple script to update WordPress.
 ## Usage
 
 1.  Place the `wordpress-updater.php` file in the root directory of your WordPress installation.
-2.  Open the file in your browser.
+2.  Open the file in your browser. Example domain.com/ordpress-updater.php
 3.  Follow the instructions on the screen.
 
 ## Warning
