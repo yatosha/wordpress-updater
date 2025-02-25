@@ -12,5 +12,4 @@ A simple script to update WordPress.
 
 This script is provided as-is and may not be suitable for all environments. Use at your own risk.
 
-## Todo
-1. Add remove file option to remove wordpress-updater.php after update
+

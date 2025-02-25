@@ -8,6 +8,7 @@ $target_dir = __DIR__ . "/";
 $zip_url = "https://wordpress.org/latest.zip";
 $zip_file = $target_dir . "wordpress_latest.zip";
 $subfolder = $target_dir . "wordpress";
+$self = basename(__FILE__);
 
 // Check if WordPress is installed by looking for wp-content folder
 function is_wordpress_installed($dir) {
@@ -34,6 +35,83 @@ function recurse_move($src, $dst) {
     closedir($dir);
 }
 
+// AJAX handler for operations
+if (isset($_GET['action'])) {
+    header('Content-Type: application/json');
+    $response = ['success' => false, 'message' => 'Unknown action'];
+    
+    switch ($_GET['action']) {
+        case 'download':
+            try {
+                if (file_put_contents($zip_file, file_get_contents($zip_url)) !== false) {
+                    $response = ['success' => true, 'message' => 'Download complete'];
+                } else {
+                    $response = ['success' => false, 'message' => 'Failed to download WordPress'];
+                }
+            } catch (Exception $e) {
+                $response = ['success' => false, 'message' => 'Error: ' . $e->getMessage()];
+            }
+            break;
+            
+        case 'extract':
+            try {
+                $zip = new ZipArchive;
+                if ($zip->open($zip_file) === TRUE) {
+                    $zip->extractTo($target_dir);
+                    $zip->close();
+                    unlink($zip_file);
+                    $response = ['success' => true, 'message' => 'Extraction complete'];
+                } else {
+                    $response = ['success' => false, 'message' => 'Failed to extract ZIP file'];
+                }
+            } catch (Exception $e) {
+                $response = ['success' => false, 'message' => 'Error: ' . $e->getMessage()];
+            }
+            break;
+            
+        case 'move':
+            try {
+                if (is_dir($subfolder)) {
+                    $files = scandir($subfolder);
+                    foreach ($files as $file) {
+                        if ($file !== '.' && $file !== '..') {
+                            $source = $subfolder . "/" . $file;
+                            $destination = $target_dir . $file;
+                            if (is_dir($source)) {
+                                recurse_move($source, $destination);
+                                rmdir($source);
+                            } else {
+                                rename($source, $destination);
+                            }
+                        }
+                    }
+                    rmdir($subfolder);
+                    $response = ['success' => true, 'message' => 'Files installed successfully'];
+                } else {
+                    $response = ['success' => false, 'message' => 'Subfolder "wordpress" not found'];
+                }
+            } catch (Exception $e) {
+                $response = ['success' => false, 'message' => 'Error: ' . $e->getMessage()];
+            }
+            break;
+            
+        case 'remove_updater':
+            try {
+                if (unlink(__FILE__)) {
+                    $response = ['success' => true, 'message' => 'Updater removed successfully'];
+                } else {
+                    $response = ['success' => false, 'message' => 'Failed to remove updater file'];
+                }
+            } catch (Exception $e) {
+                $response = ['success' => false, 'message' => 'Error: ' . $e->getMessage()];
+            }
+            break;
+    }
+    
+    echo json_encode($response);
+    exit;
+}
+
 ?>
 
 <!DOCTYPE html>
@@ -46,6 +124,8 @@ function recurse_move($src, $dst) {
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- jQuery -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
     <style>
         :root {
             --primary: #2271b1;
@@ -55,6 +135,7 @@ function recurse_move($src, $dst) {
             --text-secondary: #646970;
             --success: #00a32a;
             --warning: #dba617;
+            --danger: #d63638;
         }
         
         body {
@@ -215,6 +296,21 @@ function recurse_move($src, $dst) {
             box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
         }
         
+        .btn-danger {
+            background: var(--danger);
+            border: none;
+            color: white;
+            padding: 0.6rem 1.5rem;
+            font-size: 1rem;
+            border-radius: 4px;
+            transition: all 0.2s ease;
+            font-weight: 500;
+        }
+        
+        .btn-danger:hover {
+            background: #b32d2e;
+        }
+        
         .alert {
             font-size: 1rem;
             border-radius: 4px;
@@ -234,6 +330,7 @@ function recurse_move($src, $dst) {
             display: flex;
             justify-content: flex-end;
             margin-top: 1.5rem;
+            gap: 10px;
         }
         
         .version-info {
@@ -248,6 +345,27 @@ function recurse_move($src, $dst) {
         .version-info i {
             margin-right: 10px;
             color: var(--primary);
+        }
+        
+        .result-message {
+            animation: fadeIn 0.4s ease-out;
+        }
+        
+        .cleanup-option {
+            display: flex;
+            align-items: center;
+            background: #f9f9f9;
+            padding: 12px;
+            border-radius: 4px;
+            margin-top: 20px;
+            border: 1px solid #eaeaea;
+        }
+        
+        .cleanup-option label {
+            margin-left: 10px;
+            margin-bottom: 0;
+            font-size: 0.95rem;
+            color: var(--text-secondary);
         }
     </style>
 </head>
@@ -272,7 +390,7 @@ function recurse_move($src, $dst) {
                 </div>
                 <p class="mt-3">Update your WordPress installation to the latest version with enhanced security features and performance improvements.</p>
                 <div class="actions">
-                    <button class="btn btn-primary" onclick="window.location.href='?stage=start'">
+                    <button class="btn btn-primary" id="startUpdate">
                         <i class="fas fa-sync-alt me-2"></i> Start Update Process
                     </button>
                 </div>
@@ -282,7 +400,7 @@ function recurse_move($src, $dst) {
                 </div>
                 <p class="mt-3">We couldn't find a WordPress installation in this directory. You can still proceed, but this may overwrite existing files.</p>
                 <div class="actions">
-                    <button class="btn btn-primary" onclick="window.location.href='?stage=start'">
+                    <button class="btn btn-primary" id="startUpdate">
                         <i class="fas fa-arrow-right me-2"></i> Proceed Anyway
                     </button>
                 </div>
@@ -291,19 +409,19 @@ function recurse_move($src, $dst) {
         <?php } else { ?>
             <!-- Stepper -->
             <div class="stepper">
-                <div class="step <?php echo ($stage == 'start') ? 'active' : (($stage == 'download' || $stage == 'extract' || $stage == 'move') ? 'completed' : ''); ?>">
-                    <div class="step-icon"><?php echo ($stage == 'download' || $stage == 'extract' || $stage == 'move') ? '<i class="fas fa-check"></i>' : '1'; ?></div>
+                <div class="step active" id="step1">
+                    <div class="step-icon">1</div>
                     <div class="step-label">Initialization</div>
                 </div>
-                <div class="step <?php echo ($stage == 'download') ? 'active' : (($stage == 'extract' || $stage == 'move') ? 'completed' : ''); ?>">
-                    <div class="step-icon"><?php echo ($stage == 'extract' || $stage == 'move') ? '<i class="fas fa-check"></i>' : '2'; ?></div>
+                <div class="step" id="step2">
+                    <div class="step-icon">2</div>
                     <div class="step-label">Download</div>
                 </div>
-                <div class="step <?php echo ($stage == 'extract') ? 'active' : (($stage == 'move') ? 'completed' : ''); ?>">
-                    <div class="step-icon"><?php echo ($stage == 'move') ? '<i class="fas fa-check"></i>' : '3'; ?></div>
+                <div class="step" id="step3">
+                    <div class="step-icon">3</div>
                     <div class="step-label">Extract</div>
                 </div>
-                <div class="step <?php echo ($stage == 'move') ? 'active' : ''; ?>">
+                <div class="step" id="step4">
                     <div class="step-icon">4</div>
                     <div class="step-label">Install</div>
                 </div>
@@ -315,8 +433,9 @@ function recurse_move($src, $dst) {
                 </div>
             </div>
             <div class="status" id="statusText">
-                <i class="fas fa-spinner fa-spin me-2"></i> Initializing...
+                <i class="fas fa-spinner fa-spin me-2"></i> Initializing update process...
             </div>
+            <div id="resultContainer"></div>
         <?php } ?>
 
         <div class="footer">
@@ -326,85 +445,196 @@ function recurse_move($src, $dst) {
     </div>
 
     <script>
-        function updateProgress(percent, message, icon = 'spinner fa-spin') {
-            const progressBar = document.getElementById('progressBar');
-            const statusText = document.getElementById('statusText');
-            progressBar.style.width = percent + '%';
-            progressBar.setAttribute('aria-valuenow', percent);
-            statusText.innerHTML = `<i class="fas fa-${icon} me-2"></i> ${message}`;
-        }
-
-        <?php if ($stage === 'start') { ?>
-            updateProgress(10, 'Preparing update environment...');
-            setTimeout(() => window.location.href = '?stage=download', 1500);
-        <?php } elseif ($stage === 'download') { ?>
-            updateProgress(30, 'Downloading WordPress files from secure server...', 'cloud-download-alt');
-            <?php
-            if (file_put_contents($zip_file, file_get_contents($zip_url)) === false) {
-                die("Failed to download ZIP.");
-            }
-            ?>
-            setTimeout(() => window.location.href = '?stage=extract', 2000);
-        <?php } elseif ($stage === 'extract') { ?>
-            updateProgress(60, 'Extracting and verifying files...', 'file-archive');
-            <?php
-            $zip = new ZipArchive;
-            if ($zip->open($zip_file) === TRUE) {
-                $zip->extractTo($target_dir);
-                $zip->close();
-                unlink($zip_file);
-            } else {
-                die("Failed to extract ZIP.");
-            }
-            ?>
-            setTimeout(() => window.location.href = '?stage=move', 2000);
-        <?php } elseif ($stage === 'move') { ?>
-            updateProgress(80, 'Installing WordPress updates...', 'cog');
-            <?php
-            if (is_dir($subfolder)) {
-                $files = scandir($subfolder);
-                foreach ($files as $file) {
-                    if ($file !== '.' && $file !== '..') {
-                        $source = $subfolder . "/" . $file;
-                        $destination = $target_dir . $file;
-                        if (is_dir($source)) {
-                            recurse_move($source, $destination);
-                            rmdir($source);
-                        } else {
-                            rename($source, $destination);
+        $(document).ready(function() {
+            // Start update process handler
+            $("#startUpdate").click(function() {
+                window.location.href = '?stage=process';
+            });
+            
+            <?php if ($stage === 'process') { ?>
+                // Initialize the update process
+                let updateProcess = {
+                    currentStep: 1,
+                    errorOccurred: false,
+                    
+                    init: function() {
+                        this.updateUI(10, 'Preparing update environment...', 'spinner fa-spin');
+                        this.setActiveStep(1);
+                        setTimeout(() => this.downloadWordPress(), 1000);
+                    },
+                    
+                    updateUI: function(percent, message, icon = 'spinner fa-spin') {
+                        $("#progressBar").css('width', percent + '%').attr('aria-valuenow', percent);
+                        $("#statusText").html(`<i class="fas fa-${icon} me-2"></i> ${message}`);
+                    },
+                    
+                    setActiveStep: function(stepNumber) {
+                        // Mark previous steps as completed
+                        for (let i = 1; i < stepNumber; i++) {
+                            $(`#step${i}`).removeClass('active').addClass('completed');
+                            $(`#step${i} .step-icon`).html('<i class="fas fa-check"></i>');
                         }
+                        
+                        // Set current step as active
+                        $(`#step${stepNumber}`).addClass('active');
+                        
+                        // Reset next steps
+                        for (let i = stepNumber + 1; i <= 4; i++) {
+                            $(`#step${i}`).removeClass('active completed');
+                            $(`#step${i} .step-icon`).html(i);
+                        }
+                    },
+                    
+                    downloadWordPress: function() {
+                        this.currentStep = 2;
+                        this.setActiveStep(2);
+                        this.updateUI(30, 'Downloading WordPress files from secure server...', 'cloud-download-alt');
+                        
+                        $.ajax({
+                            url: '?action=download',
+                            type: 'GET',
+                            dataType: 'json',
+                            success: (response) => {
+                                if (response.success) {
+                                    setTimeout(() => this.extractWordPress(), 1500);
+                                } else {
+                                    this.handleError(response.message);
+                                }
+                            },
+                            error: (xhr, status, error) => {
+                                this.handleError('Network error during download: ' + error);
+                            }
+                        });
+                    },
+                    
+                    extractWordPress: function() {
+                        this.currentStep = 3;
+                        this.setActiveStep(3);
+                        this.updateUI(60, 'Extracting and verifying files...', 'file-archive');
+                        
+                        $.ajax({
+                            url: '?action=extract',
+                            type: 'GET',
+                            dataType: 'json',
+                            success: (response) => {
+                                if (response.success) {
+                                    setTimeout(() => this.installWordPress(), 1500);
+                                } else {
+                                    this.handleError(response.message);
+                                }
+                            },
+                            error: (xhr, status, error) => {
+                                this.handleError('Network error during extraction: ' + error);
+                            }
+                        });
+                    },
+                    
+                    installWordPress: function() {
+                        this.currentStep = 4;
+                        this.setActiveStep(4);
+                        this.updateUI(80, 'Installing WordPress updates...', 'cog');
+                        
+                        $.ajax({
+                            url: '?action=move',
+                            type: 'GET',
+                            dataType: 'json',
+                            success: (response) => {
+                                if (response.success) {
+                                    setTimeout(() => this.completeUpdate(), 1500);
+                                } else {
+                                    this.handleError(response.message);
+                                }
+                            },
+                            error: (xhr, status, error) => {
+                                this.handleError('Network error during installation: ' + error);
+                            }
+                        });
+                    },
+                    
+                    completeUpdate: function() {
+                        this.updateUI(100, 'Update complete! WordPress has been successfully updated.', 'check-circle');
+                        
+                        // Show success message
+                        this.showCompletionMessage();
+                    },
+                    
+                    handleError: function(errorMessage) {
+                        this.errorOccurred = true;
+                        $("#statusText").html(`<i class="fas fa-exclamation-circle me-2"></i> Error: ${errorMessage}`);
+                        
+                        $("#resultContainer").html(`
+                            <div class="alert alert-danger mt-4 result-message">
+                                <i class="fas fa-times-circle me-2"></i> The update process encountered an error:
+                                <div class="mt-2">${errorMessage}</div>
+                            </div>
+                            <div class="actions">
+                                <button class="btn btn-primary" onclick="window.location.href='?stage=check'">
+                                    <i class="fas fa-redo me-2"></i> Try Again
+                                </button>
+                            </div>
+                        `);
+                    },
+                    
+                    showCompletionMessage: function() {
+                        const filename = "<?php echo $self; ?>";
+                        
+                        $("#resultContainer").html(`
+                            <div class="alert alert-success mt-4 result-message">
+                                <i class="fas fa-check-circle me-2"></i> WordPress has been successfully updated to the latest version.
+                            </div>
+                            
+                            <div class="cleanup-option">
+                                <input type="checkbox" class="form-check-input" id="removeUpdater" checked>
+                                <label class="form-check-label" for="removeUpdater">
+                                    Remove updater script (${filename}) after completion for security
+                                </label>
+                            </div>
+                            
+                            <div class="actions mt-4">
+                                <button class="btn btn-primary" id="finishUpdate">
+                                    <i class="fas fa-external-link-alt me-2"></i> Finish & Visit Site
+                                </button>
+                            </div>
+                        `);
+                        
+                        // Handle finish button click
+                        $("#finishUpdate").click(function() {
+                            const removeUpdater = $("#removeUpdater").is(":checked");
+                            
+                            if (removeUpdater) {
+                                // Remove the updater file first
+                                $.ajax({
+                                    url: '?action=remove_updater',
+                                    type: 'GET',
+                                    dataType: 'json',
+                                    success: function(response) {
+                                        if (response.success) {
+                                            // Successfully removed, redirect to home
+                                            window.location.href = "index.php";
+                                        } else {
+                                            // Show error but still allow navigation
+                                            alert("Note: Could not remove updater file. Please delete it manually for security.");
+                                            window.location.href = "index.php";
+                                        }
+                                    },
+                                    error: function() {
+                                        // On error, still navigate to home
+                                        alert("Note: Could not remove updater file. Please delete it manually for security.");
+                                        window.location.href = "index.php";
+                                    }
+                                });
+                            } else {
+                                // Just navigate to home
+                                window.location.href = "index.php";
+                            }
+                        });
                     }
-                }
-                rmdir($subfolder);
-            } else {
-                die("Subfolder 'wordpress' not found.");
-            }
-            ?>
-            setTimeout(() => {
-                updateProgress(100, 'Update complete! WordPress has been successfully updated.', 'check-circle');
+                };
                 
-                // Show success message after completion
-                setTimeout(() => {
-                    const container = document.querySelector('.container');
-                    const statusDiv = document.getElementById('statusText');
-                    
-                    // Create success message
-                    const successDiv = document.createElement('div');
-                    successDiv.className = 'alert alert-success mt-4';
-                    successDiv.innerHTML = '<i class="fas fa-check-circle me-2"></i> WordPress has been successfully updated to the latest version.';
-                    
-                    // Insert after status
-                    statusDiv.parentNode.insertBefore(successDiv, statusDiv.nextSibling);
-                    
-                    // Add button to visit site
-                    const actionsDiv = document.createElement('div');
-                    actionsDiv.className = 'actions';
-                    actionsDiv.innerHTML = '<a href="index.php" class="btn btn-primary"><i class="fas fa-external-link-alt me-2"></i> Visit Your Site</a>';
-                    
-                    successDiv.parentNode.insertBefore(actionsDiv, successDiv.nextSibling);
-                }, 1000);
-            }, 2000);
-        <?php } ?>
+                // Start the update process
+                updateProcess.init();
+            <?php } ?>
+        });
     </script>
     <!-- Bootstrap JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
